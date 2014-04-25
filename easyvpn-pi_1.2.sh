@@ -22,6 +22,10 @@ CLIENT_NAME=""
 PROTO="udp"
 #Port to listen
 PORT="1194"
+#Port query to user
+USER_PORT=""
+#External port
+EXT_PORT=""
 #Ip of eth0
 IP_ETH0=""
 #Ip to use
@@ -116,7 +120,7 @@ function ovpn_ios(){
    connect-retry 5
    resolv-retry 60
    dev tun
-   remote $EXT_DNS $PORT $PROTO
+   remote $EXT_DNS $EXT_PORT $PROTO
    <ca>" > $ovpn 
    awk /BEGIN/,/END/ < $ca  >> $ovpn
    echo "</ca>
@@ -144,7 +148,7 @@ function ovpn_files(){
    client
    dev tun
    proto $PROTO
-   remote $EXT_DNS $PORT $PROTO
+   remote $EXT_DNS $EXT_PORT $PROTO
    resolv-retry infinite
    nobind
    persist-key
@@ -255,6 +259,7 @@ function client_cert(){
    $DER/build-dh > /dev/null 2>&1
 }
 
+#Main script starts here
 
 #Check if the script is running as root
 if [ "$UID" != "0" ]
@@ -284,6 +289,7 @@ whiptail --infobox "Loading vars..." 10 40
 source $DER/vars > /dev/null 2>&1
 
 #Erase any previous settings
+#TODO: check wether is necesary to clean key repository
 echo "Clean KEY repository..." 
 whiptail --infobox "Clean KEY repository..." 10 40
 bash $DER/clean-all > /dev/null 2>&1
@@ -292,6 +298,31 @@ bash $DER/clean-all > /dev/null 2>&1
 if [ ! -f $DER/openssl.cnf ]
 then
    ln -s $DER/openssl-1.0.0.cnf $DER/openssl.cnf
+fi
+
+#Keep the current IP of ETH0 in a variable.
+IP_ETH0=`ifconfig eth0 | grep "inet addr:" | awk '{ print $2 }' | awk -F: '{ print $2 }'`
+#Ask de user for de server IP to use
+IP_RPI=$(whiptail --inputbox "Raspberry IP: (Current IP: $IP_ETH0)" 8 50 3>&1 1>&2 2>&3)
+if [ "$IP_RPI" == "" ]
+  then
+    IP_RPI=$IP_ETH0
+fi
+
+#Ask for server port
+USER_PORT=$(whiptail --inputbox "Port to listen: (Default port: $PORT)" 8 50 3>&1 1>&2 2>&3)
+if [ "$USER_PORT" != "" ]
+  then
+    PORT=$USER_PORT
+fi
+
+#Ask for external DNS or IP for client use
+EXT_DNS=$(whiptail --inputbox "External DNS or IP" 8 50 3>&1 1>&2 2>&3)
+#Ask for external Port for client use
+EXT_PORT=$(whiptail --inputbox "External Port (Default $PORT)" 8 50 3>&1 1>&2 2>&3)
+if [ "$EXT_PORT" == "" ]
+  then
+    EXT_PORT=$PORT
 fi
 
 #Create the CA certificate if installing packages or user wants
@@ -305,24 +336,12 @@ client_cert
 
 #Activate the IP_FORWARD for packet forwarding, editing 
 #the file /etc/sysctl.conf
-#TODO: check if this rule is in the file
 sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
 
-#Keep the current IP of ETH0 in a variable.
-IP_ETH0=`ifconfig eth0 | grep "inet addr:" | awk '{ print $2 }' | awk -F: '{ print $2 }'`
-
 #Define the iptables rules to run on every system start
-IP_RPI=$(whiptail --inputbox "Raspberry IP: (Current IP: $IP_ETH0)" 8 50 3>&1 1>&2 2>&3)
-if [ "$IP_RPI" == "" ]
-  then
-    IP_RPI=$IP_ETH0
-fi
 #TODO: check if this entries exists in the file
-sed -i '$ i\iptables -t nat -A INPUT -i eth0 -p $PROTO -m $PROTO --dport $PORT -j ACCEPT' /etc/rc.local
+sed -i "$ i\iptables -t nat -A INPUT -i eth0 -p $PROTO -m $PROTO --dport $PORT -j ACCEPT" /etc/rc.local
 sed -i "$ i\iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j SNAT --to-source $IP_RPI" /etc/rc.local
-
-#Ask for external DNS or IP
-EXT_DNS=$(whiptail --inputbox "External DNS or IP" 8 50 3>&1 1>&2 2>&3)
 
 #Create a folder where the certificates are stored and copy them there credentials.
 CLIENT_DIR="$OUT_DIR/$CLIENT_NAME"
